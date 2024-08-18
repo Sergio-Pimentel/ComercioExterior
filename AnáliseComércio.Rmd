@@ -1,0 +1,373 @@
+---
+title: "Dados de Comércio - Sudeste"
+author: "Sergio Pimentel"
+runtime: shiny
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+    theme: journal
+    sidebar:
+      height: 5
+    
+---
+
+```{r setup, include=FALSE}
+
+
+#install.packages("tidyverse")
+#install.packages("flexdashboard", repos = "http://cran.us.r-project.org")
+#install.packages("shinydashboard")
+#install.packages("rmarkdown")
+#install.packages("DT")
+#install.packages("rsconnect")
+#install.packages("ggplot2")
+#install.packages("dplyr")
+#install.packages("shiny", repos = "http://cran.us.r-project.org")
+library(tidyverse)
+library(flexdashboard)
+library(shinydashboard)
+library(rmarkdown)
+library(DT)
+library(shiny)
+library(DT)
+library(ggplot2)
+library(dplyr)
+library(plotly)
+
+exportacao <- read.csv("path\\Exportacao.csv",sep = ";", dec = ",")
+importacao <- read.csv("path\\Importacao.csv", sep = ";", dec = ",")
+PIBmunicipio <- read.csv("path\\PIBMunicipio.csv", sep = ";", dec = ",")
+# Removendo coluna CodigoUF
+PIBmunicipio <- select(PIBmunicipio, -CodigoUF)
+# Renomeando Coluna SiglaUF
+PIBmunicipio <- rename(PIBmunicipio, CodigoUF = SiglaUF)
+
+# Renomear a coluna CodigoUF para UF em cada dataframe
+exportacao <- exportacao %>% rename(UF = CodigoUF)
+importacao <- importacao %>% rename(UF = CodigoUF)
+PIBmunicipio_filtrado <- PIBmunicipio %>% rename(UF = CodigoUF)
+# Filtrar apenas dados de estados do Sudeste
+PIBmunicipio_filtrado <- subset(PIBmunicipio_filtrado, UF %in% c("ES", "MG", "RJ", "SP") & Ano %in% c(2018,2019,2020))
+
+# Agregar os dados de exportação
+dados_exportacao <- exportacao %>% 
+  group_by(Ano, UF) %>% 
+  summarise(Valor = sum(FOB, na.rm = TRUE)/1000000000, Tipo = "Exportacao")
+
+# Agregar os dados de importação
+dados_importacao <- importacao %>% 
+  group_by(Ano, UF) %>% 
+  summarise(Valor = sum(FOB, na.rm = TRUE)/1000000000, Tipo = "Importacao")
+
+# Agregar os dados de PIBmunicipio_filtrado
+dados_PIB <- PIBmunicipio_filtrado %>% 
+  group_by(UF) %>% 
+  summarise(PIB = sum(PIB, na.rm = TRUE)/1000000000)
+
+
+# Combinar os dataframes usando full_join
+dados <- bind_rows(dados_exportacao, dados_importacao)
+
+
+
+## Função para calcular contagem de ocorrências de Mes
+calcular_contagem_mes <- function(dados, tipo) {
+  dados %>%
+    mutate(Tipo = tipo) %>%
+    count(UF, Ano, Mes, Tipo, name = "Ocorrencias") %>%
+    complete(UF, Ano, Mes = 1:12, fill = list(Ocorrencias = 0))
+}
+
+# Calcular contagem para exportacao
+dados_contagem_exportacao <- calcular_contagem_mes(exportacao, "Exportacao")
+
+# Calcular contagem para importacao
+dados_contagem_importacao <- calcular_contagem_mes(importacao, "Importacao")
+
+# Combinar os resultados, se necessário
+dados_contagem <- bind_rows(dados_contagem_exportacao, dados_contagem_importacao)
+# Ordenando por Tipo
+dados_contagem <- dados_contagem %>% arrange(Tipo)
+```
+
+# visualizações {data-icon="fa-signal" data-navmenu="Análises"}
+## {.sidebar} 
+```{r}
+
+inputPanel(
+  selectInput("UF", label = h4("Selecione o Estado:"), 
+              choices = list("ES", "MG", "RJ", "SP", "todas"), selected = "todas"),
+  selectInput("Ano", label = h4("Selecione o Ano:"), 
+              choices = list("2018", "2019", "2020", "2021", "todas"), selected = "todas")
+)
+
+
+```
+## Column {data-width="650"}
+
+### 
+```{r ChartA, echo=FALSE}
+
+renderPlotly({
+  if (input$UF != "todas" & input$Ano != "todas") {
+    dados_filtrados <- dados_contagem %>%
+      filter(str_detect(UF, input$UF) & as.integer(Ano) == as.integer(input$Ano))
+  } else if (input$UF != "todas") {
+    dados_filtrados <- dados_contagem %>%
+      filter(str_detect(UF, input$UF))
+  } else if (input$Ano != "todas") {
+    dados_filtrados <- dados_contagem %>%
+      filter(as.integer(Ano) == as.integer(input$Ano))
+  } else {
+    dados_filtrados <- dados_contagem
+  }
+  
+  grafico <- ggplot(
+      data = dados_filtrados,
+      aes(x = Mes, y = Ocorrencias, color = UF, linetype = Tipo, fill = Tipo)
+    ) +
+      geom_line() +
+      geom_point(size = 2) +
+      labs(title = paste("Séries Temporais por Ano e Tipo de Comércio"),  
+           x = "Mês", y = "Contagem") +
+      scale_color_manual(values = c("lightblue", "orange", "lightgreen", "coral")) +
+      scale_linetype_manual(values = c("solid", "dashed")) +
+      theme_minimal()
+    
+    ggplotly(grafico, height = 400)
+})
+
+```
+## Column {data-width="350"}
+### 
+
+```{r ChartB, echo=FALSE}
+renderPlotly({
+  if (input$UF != "todas") {
+    dados_filtrados <- dados %>% 
+      filter(str_detect(UF, input$UF))
+    # Aplicar filtro para o Ano
+    if (input$Ano != "todas") {
+      dados_filtrados <- dados %>% 
+        filter(str_detect(Ano, input$Ano))
+    }
+      if (input$UF != "todas" & input$Ano != "todas") {
+        dados_filtrados <- dados %>%
+          filter(str_detect(UF, input$UF) & str_detect(Ano, input$Ano))
+      }
+  } else {
+    dados_filtrados <- dados  # Se a opção for "todas", não aplicar filtro
+  }
+    
+    
+  
+  grafico <- ggplot(
+    data = dados_filtrados,
+    aes(x = Ano, y = Valor, fill = Tipo)
+  ) + 
+  geom_bar(stat = "identity",position = "identity", alpha = 0.7) +
+  facet_wrap(~ UF, scales = "free_y")
+  
+  ggplotly(grafico, height = 300)
+})
+```
+
+
+### 
+
+```{r ChartC, echo=FALSE}
+
+renderPlotly({
+  
+  if (input$UF != "todas") {
+    dados_filtrados <- dados_PIB
+  } else {
+    dados_filtrados <- dados_PIB
+  }
+  
+  # Gráfico de pizza com plotly
+  grafico_pizza <- plot_ly(
+    data = dados_filtrados,
+    labels = ~UF,
+    values = ~PIB,
+    type = "pie",
+    hoverinfo = "label+percent+value",  # Mostra informações ao passar o mouse sobre as fatias
+    marker = list(colors = c("lightblue", "orange", "lightgreen", "coral"))  # Define cores para as fatias
+  ) 
+  
+  grafico_pizza <- layout(
+    grafico_pizza,
+    title = "Contribuição dos estados para o PIB do Sudeste",
+    showlegend = TRUE
+  )
+  
+  # Retorna o gráfico plotly
+  ggplotly(grafico_pizza)
+})
+
+```
+
+
+
+
+# Tabelas {data-icon="fa-table" data-navmenu="Análises"}
+## Column {data-width="150"}
+
+### Exportação dos Estados do Sudeste por Ano
+
+
+```{r Exportacao, echo=FALSE}
+
+# Copiando os dados para 'exportacao_novo' para preservar os dados originais
+
+exportacao_novo <- exportacao
+
+# Define a estrutura da UI para os filtros e tabela
+ui_export <- fluidPage(
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("anoInput", "Ano:", choices = c("todas", unique(exportacao_novo$Ano))),
+      selectInput("UF", "Selecione o Estado:", choices = c("todas", "ES", "MG", "RJ", "SP"))
+      # Adicione mais filtros conforme necessário
+    ),
+    mainPanel(
+      DTOutput("tabela_exportacao")
+    )
+  )
+)
+
+# Define a lógica do servidor para a renderização da tabela
+export <- function(input, output) {
+  dados_filtrados_export <- reactive({
+    filtered_data_export <- exportacao_novo
+    
+    if (input$anoInput != "todas") {
+      filtered_data_export <- filtered_data_export %>%
+        filter(Ano == input$anoInput)
+    }
+    
+    if (input$UF != "todas") {
+      filtered_data_export <- filtered_data_export %>%
+        filter(UF == input$UF)
+    }
+    
+    filtered_data_export  # Retorna os dados filtrados
+  })
+  
+  output$tabela_exportacao <- renderDT({
+    # Aplique filtros aos dados com base nos inputs do usuário
+    filtered_data <- dados_filtrados_export()
+    
+    # Exibe a tabela com processamento no lado do servidor
+    datatable(filtered_data, options = list(pageLength = 10, scrollX = TRUE, scrollY = "500px"))
+  })
+}
+
+# Rode o aplicativo Shiny
+shinyApp(ui = ui_export, server = export)
+
+```
+## Column {data-width="150"}
+
+### Importação dos Estados do Sudeste por Ano
+
+```{r Importacao, echo=FALSE}
+library(shiny)
+library(DT)
+# Copiando os dados para 'importacao_novo' para preservar os dados originais
+importacao_novo <- importacao
+
+# Definindo a estrutura da UI para os filtros e tabela
+ui_import <- fluidPage(
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("anoInput", "Ano:", choices = c("todas", unique(importacao_novo$Ano))),
+      selectInput("UF", "Selecione o Estado:", choices = c("todas", "ES", "MG", "RJ", "SP"))
+      # Adicione mais filtros conforme necessário
+    ),
+    mainPanel(
+      DTOutput("tabela_importacao")
+    )
+  )
+)
+
+# Define a lógica do servidor para a renderização da tabela
+import <- function(input, output) {
+  dados_filtrados_import <- reactive({
+    filtered_data_import <- importacao_novo
+    
+    if (input$anoInput != "todas") {
+      filtered_data_import <- filtered_data_import %>%
+        filter(Ano == input$anoInput)
+    }
+    if (input$UF != "todas") {
+      filtered_data_import <- filtered_data_import %>%
+        filter(UF == input$UF)
+    }
+    filtered_data_import  # Retorna os dados filtrados
+  })
+  
+  output$tabela_importacao <- renderDT({
+    # Aplique filtros aos dados com base nos inputs do usuário
+    filtered_data <- dados_filtrados_import()
+    
+    # Exibe a tabela com processamento no lado do servidor
+    datatable(filtered_data, options = list(pageLength = 10, scrollX = TRUE, scrollY = "500px"))
+  })
+}
+
+# Rode o aplicativo Shiny
+shinyApp(ui = ui_import, server = import)
+
+
+```
+## Column {data-width="150"}
+
+### PIB dos Estados por Ano
+
+```{r PIB, echo=FALSE}
+
+# Copiando os dados para 'PIBmunicipio' para preservar os dados originais
+PIBmunicipio_novo <- PIBmunicipio
+
+ui_pib <- fluidPage(
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("anoInput", "Ano:", choices = c("todas", "2010", "2011", "2012", "2013", "2014", "2015", "2016","2017","2018","2019","2020")),
+      selectInput("UF", "Selecione o Estado:", choices = c("todas", "ES", "MG", "RJ", "SP"))
+      # Adicione mais filtros conforme necessário
+    ),
+    mainPanel(
+      DTOutput("tabela_PIBmunicipio")
+    )
+  )
+)
+
+# Define a lógica do servidor para a renderização da tabela
+pib <- function(input, output) {
+  dados_filtrados <- reactive({
+    filtered_data_pib <- PIBmunicipio_novo
+    
+    if (input$anoInput != "todas") {
+      filtered_data_pib <- filtered_data_pib %>% 
+        filter(Ano == input$anoInput)
+    }
+    
+    if (input$UF != "todas") {
+      filtered_data_pib <- filtered_data_pib %>% 
+        filter(UF == input$UF)
+    }
+    
+    return(filtered_data_pib)
+  })
+
+  output$tabela_PIBmunicipio <- renderDT({
+    datatable(dados_filtrados(), options = list(pageLength = 10, scrollX = TRUE, scrollY = TRUE))
+  })
+}
+
+# Rode o aplicativo Shiny
+shinyApp(ui = ui_pib, server = pib)
+
+```
